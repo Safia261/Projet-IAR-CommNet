@@ -38,7 +38,7 @@ class CommNet(nn.Module):
         self.encoder = nn.Linear(self.input_dim, self.hidden_dim)
 
         # Couches cachées
-        self.hlayers = nn.ModuleList([self._create_module()] for k in range (self.comm_steps))
+        self.hlayers = nn.ModuleList([self._create_module() for _ in range (self.comm_steps)])
 
         # Couche de sortie / de décodage
         self.decoder = nn.Linear(self.hidden_dim, self.output_dim)
@@ -66,21 +66,29 @@ class CommNet(nn.Module):
         if self.nonlin == "tanh":
             return nn.Tanh()
         elif self.nonlin == "relu":
-            return nn.ReLu()
+            return nn.ReLU()
         else:
             raise ValueError("Non-linéarité non conforme.")
     
 
-    def forward(self, x):
-        # voir plus tard la forme du tenseur x selon la suite du projet (x = concaténation des états initiaux s)
+    def forward(self, s):
+        # voir plus tard la forme du tenseur s selon la suite du projet (s = concaténation des états initiaux s_j de chaque agent)
+        # s de la forme (batch_size, nagents, input_dim) ?
+        batch_size = s.size(0)
 
         # Encodage des états s en états cachés h
-        h = self._nonlin(self.encoder(x))
+        h = self._nonlin(self.encoder(s))
+
+        # mask pour calculer c (moyenne des h des agents sauf celui de l'agent courant)
+        mask = torch.ones(self.nagents, self.nagents) - torch.eye(self.nagents)
+        mask_expanded = mask.unsqueeze(0).unsqueeze(-1) # de forme (1, nagents, nagents, 1)
+        # risque de ne pas marcher si le nombre d'agents est dynamique
 
         # Passage par les couches cachées
         for k in range (self.comm_steps):
-            # màj du vecteur de communication c
-            c = h.mean()
+            # màj du vecteur de communication c (de la forme (batch, nagents, hidden_dim) ?)
+            c = (h.unsqueeze(1) * mask.expanded).sum(dim = 2)/ self.nagents - 1  # et s(il y avait qu'1 seul agent?)
+            # avec h.unsqueeze de forme (batch, 1, nagents, hidden_dim)
 
             # concaténation de h et c pour appliquer la non-linéarité
             hc_concat = torch.cat((h, c), dim = -1)
