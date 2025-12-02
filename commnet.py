@@ -74,7 +74,6 @@ class CommNet(nn.Module):
     def forward(self, s):
         # voir plus tard la forme du tenseur s selon la suite du projet (s = concaténation des états initiaux s_j de chaque agent)
         # s de la forme (batch_size, nagents, input_dim) ?
-        batch_size = s.size(0)
 
         # Encodage des états s en états cachés h
         h = self._nonlin(self.encoder(s))
