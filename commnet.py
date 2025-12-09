@@ -7,14 +7,14 @@ class CommNet(nn.Module):
     """
     Classe de CommNet.
     param = {
-        "module" = "mlp"        # mlp / rnn / lstm (module f())
-        "nonlin" = "tanh"       # tanh / relu (non-linéarité sigma)
-        "hidden_dim" = 50       # dimension de la couche cachée
-        "input_dim" = 10        # dimension de la couche d'entrée
-        "output_dim" = 10       # dimension de la couche de sortie
-        "comm_steps" = 2        # pas de communication (K dans l'article)
-        "nagents" = 10          # nombre d'agents
-        "nactions" = 4          # nombre d'actions (car actions discrètes)
+        "module" = "mlp",        # mlp / rnn / lstm (module f())
+        "nonlin" = "tanh",       # tanh / relu (non-linéarité sigma)
+        "hidden_dim" = 50,       # dimension de la couche cachée
+        "input_dim" = 10,        # dimension de la couche d'entrée
+        # "output_dim" = 10,     # dimension de la couche de sortie
+        "comm_steps" = 2,        # pas de communication (K dans l'article)
+        "nagents" = 10,          # nombre d'agents
+        "nactions" = 4           # nombre d'actions (car actions discrètes)
 
         # ajouter (ou supprimer) par la suite les paramètres nécessaires
     }
@@ -25,12 +25,12 @@ class CommNet(nn.Module):
         super(CommNet, self).__init__()
 
         self.param = param
-        self.module = param["module"]
+        self.module = param["module"] # pas plutot self.param?
         self.nonlin = param["nonlin"]
         self.nagents = param["nagents"]
         self.nactions = param["nactions"]
         self.input_dim = param["input_dim"]
-        self.output_dim = param["output_dim"]
+        # self.output_dim = param["output_dim"] # = nactions
         self.hidden_dim = param["hidden_dim"]
         self.comm_steps = param["comm_steps"]
 
@@ -41,7 +41,14 @@ class CommNet(nn.Module):
         self.hlayers = nn.ModuleList([self._create_module() for _ in range (self.comm_steps)])
 
         # Couche de sortie / de décodage
-        self.decoder = nn.Linear(self.hidden_dim, self.output_dim)
+        self.decoder = nn.Linear(self.hidden_dim, self.nactions)
+
+        if self.nonlin == "tanh":
+            self.activation = nn.Tanh()
+        elif self.nonlin == "relu":
+            self.activation = nn.ReLU()
+        else:
+            raise ValueError("Non-linéarité non conforme.")
     
 
     def _create_module(self):
@@ -49,7 +56,7 @@ class CommNet(nn.Module):
         Renvoie la couche avec le module f() choisi.
         """
         if self.module == "mlp":
-            return nn.Linear(self.hidden_dim * 2, self.hidden_dim) 
+            return nn.Linear(self.hidden_dim * 2, self.hidden_dim)
             # multiplication par 2 car 2 vecteurs h et c en input par agent
         elif self.module == "rnn":
             return nn.RNN(self.hidden_dim * 2, self.hidden_dim, batch_first = True)
@@ -57,18 +64,6 @@ class CommNet(nn.Module):
             return nn.LSTM(self.hidden_dim * 2, self.hidden_dim, batch_first = True)
         else:
             raise ValueError("Type du module incorrect. Doit être de type MLP, RNN ou LSTM.") 
-
-      
-    def _nonlin(self, dim_in, dim_out):
-        """
-        Applique la non-linéairité (sigma) choisie (correspondant à la fonction d'activation).
-        """
-        if self.nonlin == "tanh":
-            return nn.Tanh()
-        elif self.nonlin == "relu":
-            return nn.ReLU()
-        else:
-            raise ValueError("Non-linéarité non conforme.")
     
 
     def forward(self, s):
@@ -76,17 +71,17 @@ class CommNet(nn.Module):
         # s de la forme (batch_size, nagents, input_dim) ?
 
         # Encodage des états s en états cachés h
-        h = self._nonlin(self.encoder(s))
+        h = self.activation(self.encoder(s))
 
         # mask pour calculer c (moyenne des h des agents sauf celui de l'agent courant)
-        mask = torch.ones(self.nagents, self.nagents) - torch.eye(self.nagents)
+        mask = torch.ones(self.nagents, self.nagents, device=s.device) - torch.eye(self.nagents)
         mask_expanded = mask.unsqueeze(0).unsqueeze(-1) # de forme (1, nagents, nagents, 1)
         # risque de ne pas marcher si le nombre d'agents est dynamique
 
         # Passage par les couches cachées
         for k in range (self.comm_steps):
             # màj du vecteur de communication c (de la forme (batch, nagents, hidden_dim) ?)
-            c = (h.unsqueeze(1) * mask.expanded).sum(dim = 2)/ self.nagents - 1  # et s(il y avait qu'1 seul agent?)
+            c = (h.unsqueeze(1) * mask_expanded).sum(dim = 2)/ (self.nagents - 1)  # et s(il y avait qu'1 seul agent?)
             # avec h.unsqueeze de forme (batch, 1, nagents, hidden_dim)
 
             # concaténation de h et c pour appliquer la non-linéarité
@@ -94,10 +89,10 @@ class CommNet(nn.Module):
 
             # application de la non-linéarité
             if self.module == "mlp":
-                h = self._nonlin(self.hlayer[k](hc_concat))
+                h = self.activation(self.hlayers[k](hc_concat))
             elif self.module == "rnn" or self.module == "lstm":
-                output, _ = self.hlayer[k](hc_concat)
-                h = self._nonlin(output)
+                output, _ = self.hlayers[k](hc_concat)
+                h = self.activation(output)
             
         logits = self.decoder(h) # logits = sorties de la dernière couche mais pas encore les actions -> softmax à appliquer
         return logits
