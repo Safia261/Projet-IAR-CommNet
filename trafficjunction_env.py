@@ -58,6 +58,8 @@ class TrafficJunction:
         self.num_agents = 0
         self.positions = torch.zeros((self.max_agents, 2), dtype=torch.long, device=self.device)
         self.directions = torch.zeros((self.max_agents, 2), dtype=torch.long, device=self.device)
+        self.route_id = torch.full((self.max_agents,), -1, dtype=torch.long, device=self.device)
+        self.has_turned = torch.zeros(self.max_agents, dtype=torch.bool, device=self.device)
         self.active = torch.zeros(self.max_agents, dtype=torch.bool, device=self.device)
         self.age = torch.zeros(self.max_agents, dtype=torch.long, device=self.device)
         self.collision_count = 0
@@ -76,7 +78,7 @@ class TrafficJunction:
         if random.random() > self.p_arrive:
             return
         
-        # 4 routes possibles et 2 voies possibles par route
+        # 4 routes possibles et 2 voies (=directions) possibles par route
         routes = [ 
             (torch.tensor([0, self.center - 1]), torch.tensor([1, 0])), # Nord -> Sud
             (torch.tensor([self.grid_size-1, self.center]), torch.tensor([-1, 0])), # Sud -> Nord
@@ -87,25 +89,80 @@ class TrafficJunction:
         pos, direction = random.choice(routes)
 
         # on vérifie si la case est libre pour cette nouvelle voiture
-        for i in range(self.num_agents):
+        for i in range(self.max_agents):
             if self.active[i] and torch.equal(self.positions[i], pos):
                 return
         
-        for idx in range (self.max_agents):
-            if not self.active[idx]:
-                self.positions[idx] = pos 
-                self.directions[idx] = direction 
-                self.active[idx] = True
-                self.age[idx] = 0 
+        for i in range (self.max_agents):
+            if not self.active[i]:
+                self.positions[i] = pos 
+                self.directions[i] = direction 
+                self.active[i] = True
+                self.age[i] = 0 
+                self.route_id[i] = random.randint(0, 2)     # 0: tout droit, 1: à gauche, 2: à droite
+                self.has_turned[i] = False
                 self.num_agents += 1
                 return
 
-        # idx = self.num_agents
-        # self.positions[idx] = pos 
-        # self.directions[idx] = direction 
-        # self.active[idx] = True
-        # self.age[idx] = 0 
-        # self.num_agents += 1
+    
+    def apply_turn(self, i):
+        """
+        Applique le changement de direction (et donc de route et de voie) à un agent i
+        quand il est au carrefour.
+        """
+
+        if self.route_id[i] == 0:
+            self.has_turned[i] = True
+            return
+        
+        if self.has_turned[i]:
+            return
+        
+        x, y = self.positions[i].tolist()
+        pos = (x, y)
+        dx, dy = self.directions[i].tolist()
+
+        # Cases du carrefour
+        A = (self.center - 1, self.center - 1) 
+        B = (self.center - 1, self.center) 
+        C = (self.center, self.center - 1) 
+        D = (self.center, self.center)
+
+        # Voiture venant du Nord (direction Sud)
+        if (dx, dy) == (1, 0):
+            if self.route_id[i] == 2 and pos == A: # tourner à droite, -> Ouest
+                self.directions[i] = torch.tensor([0, -1], device=self.device)
+                self.has_turned[i] = True
+            elif self.route_id[i] == 1 and pos == C: # tourner à gauche, -> Est
+                self.directions[i] = torch.tensor([0, 1], device=self.device)
+                self.has_turned[i] = True
+        
+        # Voiture venant du Sud (direction Nord)
+        elif (dx, dy) == (-1, 0):
+            if self.route_id[i] == 2 and pos == D: # tourner à droite, -> Est
+                self.directions[i] = torch.tensor([0, 1], device=self.device)
+                self.has_turned[i] = True
+            elif self.route_id[i] == 1 and pos == B: # tourner à gauche, -> Ouest
+                self.directions[i] = torch.tensor([0, -1], device=self.device)
+                self.has_turned[i] = True
+        
+       # Voiture venant de l'Ouest (direction Est)
+        elif (dx, dy) == (0, 1):
+            if self.route_id[i] == 2 and pos == C: # tourner à droite, -> Sud
+                self.directions[i] = torch.tensor([1, 0], device=self.device)
+                self.has_turned[i] = True
+            elif self.route_id[i] == 1 and pos == D: # tourner à gauche, -> Nord
+                self.directions[i] = torch.tensor([-1, 0], device=self.device)
+                self.has_turned[i] = True
+            
+        # Voiture venant de l'Est (direction Ouest)
+        elif (dx, dy) == (0, -1):
+            if self.route_id[i] == 2 and pos == B: # tourner à droite, -> Nord
+                self.directions[i] = torch.tensor([-1, 0], device=self.device)
+                self.has_turned[i] = True
+            elif self.route_id[i] == 1 and pos == A: # tourner à gauche, -> Sud
+                self.directions[i] = torch.tensor([1, 0], device=self.device)
+                self.has_turned[i] = True
 
 
     def get_obs(self):
@@ -134,6 +191,18 @@ class TrafficJunction:
         self.arriving_car()
         self.age[self.active] += 1
 
+        # Appliquer le changement de direction au niveau du carrefour
+        for i in range(self.max_agents): 
+            if not self.active[i]: 
+                continue
+
+            if self.has_turned[i]:
+                continue
+            # si l'agent est bien au niveau du carrefour
+            x, y = self.positions[i] 
+            if (x == self.center or x == self.center - 1) and (y == self.center or y == self.center - 1): 
+                self.apply_turn(i)
+
         # Déplacements des voitures
         for i in range(self.max_agents):
             if self.active[i] and actions[i] == GAS:
@@ -158,6 +227,7 @@ class TrafficJunction:
                     reward += 1.0
                     self.active[i] = False
                     self.age[i] = 0 
+                    self.has_turned[i] = False
                     self.num_agents -= 1
 
 
