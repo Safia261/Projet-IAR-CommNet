@@ -3,6 +3,7 @@ import argparse
 import torch
 import torch.nn.functional as F
 from torch import optim
+from torch.distributions import Categorical
 
 from commnet import CommNet
 from leverpulling_env import LeverPullingEnv
@@ -29,6 +30,20 @@ def evaluate_greedy(model, env, num_trials=500, batch_size=64, device="cpu"):
 
     model.train()
     return total_reward / float(num_trials)
+
+def evaluate_greedy_final(model, env, device, num_episodes=1000):
+    model.eval()
+    rewards = []
+
+    with torch.no_grad():
+        for _ in range(num_episodes):
+            agent_ids = env.sample_agent_ids(1, device=device)  # batch=1
+            logits = model(agent_ids)
+            actions = logits.argmax(dim=-1)
+            reward = env.compute_reward(actions)
+            rewards.append(reward.item())
+
+    return sum(rewards) / len(rewards)
 
 
 def train_supervised(
@@ -62,6 +77,53 @@ def train_supervised(
                 f"Greedy eval: {greedy_score:.3f}"
             )
 
+def train_rl(
+    model,
+    env,
+    device="cpu",
+    num_steps=50000,
+    batch_size=64,
+    lr=1e-3,
+    print_every=500,
+    baseline_momentum=0.9,
+):
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    baseline = 0.0
+    model.train()
+
+    for step in range(1, num_steps + 1):
+        agent_ids = env.sample_agent_ids(batch_size, device=device)
+
+        logits = model(agent_ids) # (B, M, A)
+        dist = Categorical(logits=logits)
+        actions = dist.sample() # (B, M)
+        log_probs = dist.log_prob(actions) # (B, M)
+
+        rewards = env.compute_reward(actions) # (B,)
+
+        # Baseline minimal (REINFORCE with baseline)
+        # baseline EMA (standard)
+        batch_mean = rewards.mean().item()
+        baseline = baseline_momentum * baseline + (1 - baseline_momentum) * batch_mean
+        adv = rewards - baseline
+
+        # Loss REINFORCE
+        loss = -(log_probs.sum(dim=1) * adv.detach()).mean()
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if step % print_every == 0:
+            greedy_score = evaluate_greedy(model, env, device=device)
+            print(
+                f"[Step {step:6d}] loss={loss.item():.4f} "
+                f"r_mean={rewards.mean().item():.3f} baseline={baseline:.3f} "
+                f"greedy={greedy_score:.3f}"
+            )
+
+
 def main():
     # Parametres a rajouter pour l'execution dans le terminal
     parser = argparse.ArgumentParser()
@@ -69,8 +131,8 @@ def main():
         "--mode",
         type=str,
         default="supervised",
-        choices=["reinforce", "supervised"],
-        help='Mode d\'apprentissage: "reinforce" ou "supervised"',
+        choices=["RL", "supervised"],
+        help='Mode d\'apprentissage: "RL" ou "supervised"',
     )
     parser.add_argument(
         "--device",
@@ -103,17 +165,16 @@ def main():
 
 
     if args.mode == "supervised":
-        train_supervised(
-            model,
-            env,
-            device=device,
-            num_steps=50000,
-            batch_size=64,
-            lr=1e-3,
-            print_every=500,
-        )
+        train_supervised(model, env, device=device, num_steps=50000, batch_size=64, lr=1e-3, print_every=500)
+
+        final_score = evaluate_greedy_final(model, env, device=device, num_episodes=1000)
+        print(f"FINAL GREEDY SCORE: {final_score:.3f}")
+
     else:
-        print("a implementer !")
+        train_rl(model, env, device=device, num_steps=50000, batch_size=64, lr=1e-3, print_every=500)
+
+        final_score = evaluate_greedy_final(model, env, device=device, num_episodes=1000)
+        print(f"FINAL GREEDY SCORE: {final_score:.3f}")
 
 
 if __name__ == "__main__":

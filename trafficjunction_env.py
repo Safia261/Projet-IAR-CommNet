@@ -7,7 +7,7 @@ import tkinter as tk
 BREAK = 0           # arrêt
 GAS = 1             # avancer
 
-class TrafficJunction:
+class TrafficJunctionEnv:
     """
     Environnement pour le jeu Traffic Junction:
 
@@ -25,8 +25,9 @@ class TrafficJunction:
             grid_size = 14, 
             max_steps = 40,
             max_agents = 10,
-            p_arrive =  0.3,
+            p_arrive =  0.05,
             device="cpu",
+            vision_range = 3,
             render_mode = True):
         
         self.grid_size = grid_size
@@ -36,6 +37,9 @@ class TrafficJunction:
         self.max_agents = max_agents
         self.p_arrive = p_arrive
         self.render_mode = render_mode
+        # assert vision_range % 2 == 1, "vision_range doit être impair (3,5,7,...)"
+        self.vision_range = vision_range
+        self.vision_radius = vision_range // 2
         self.collision_count = 0
         self.global_reward = 0.0
 
@@ -58,7 +62,7 @@ class TrafficJunction:
         self.num_agents = 0
         self.positions = torch.zeros((self.max_agents, 2), dtype=torch.long, device=self.device)
         self.directions = torch.zeros((self.max_agents, 2), dtype=torch.long, device=self.device)
-        self.route_id = torch.full((self.max_agents,), -1, dtype=torch.long, device=self.device)
+        self.route_id = torch.full((self.max_agents,), -1, dtype=torch.long, device=self.device) # id de la route vers laquelle tourner (G/D/en face)
         self.has_turned = torch.zeros(self.max_agents, dtype=torch.bool, device=self.device)
         self.active = torch.zeros(self.max_agents, dtype=torch.bool, device=self.device)
         self.age = torch.zeros(self.max_agents, dtype=torch.long, device=self.device)
@@ -74,35 +78,42 @@ class TrafficJunction:
         """
         if self.num_agents >= self.max_agents:
             return
-
-        if random.random() > self.p_arrive:
-            return
         
         # 4 routes possibles et 2 voies (=directions) possibles par route
         routes = [ 
-            (torch.tensor([0, self.center - 1]), torch.tensor([1, 0])), # Nord -> Sud
-            (torch.tensor([self.grid_size-1, self.center]), torch.tensor([-1, 0])), # Sud -> Nord
-            (torch.tensor([self.center, 0]), torch.tensor([0, 1])), # Ouest -> Est
-            (torch.tensor([self.center - 1, self.grid_size-1]), torch.tensor([0, -1])) # Est -> Ouest 
+            (torch.tensor([0, self.center - 1], device=self.device), torch.tensor([1, 0], device=self.device)), # Nord -> Sud
+            (torch.tensor([self.grid_size-1, self.center], device=self.device), torch.tensor([-1, 0], device=self.device)), # Sud -> Nord
+            (torch.tensor([self.center, 0], device=self.device), torch.tensor([0, 1], device=self.device)), # Ouest -> Est
+            (torch.tensor([self.center - 1, self.grid_size-1], device=self.device), torch.tensor([0, -1], device=self.device)) # Est -> Ouest 
             ]
         
-        pos, direction = random.choice(routes)
+        for pos, direction in routes:
+            if self.num_agents >= self.max_agents:
+                return
+            
+            if random.random() > self.p_arrive:
+                continue
 
-        # on vérifie si la case est libre pour cette nouvelle voiture
-        for i in range(self.max_agents):
-            if self.active[i] and torch.equal(self.positions[i], pos):
-                return
-        
-        for i in range (self.max_agents):
-            if not self.active[i]:
-                self.positions[i] = pos 
-                self.directions[i] = direction 
-                self.active[i] = True
-                self.age[i] = 0 
-                self.route_id[i] = random.randint(0, 2)     # 0: tout droit, 1: à gauche, 2: à droite
-                self.has_turned[i] = False
-                self.num_agents += 1
-                return
+            # case libre ?
+            blocked = False
+            for k in range(self.max_agents):
+                if self.active[k] and torch.equal(self.positions[k], pos):
+                    blocked = True
+                    break
+            if blocked:
+                continue
+
+            # trouver un slot agent libre
+            for i in range(self.max_agents):
+                if not self.active[i]:
+                    self.positions[i] = pos
+                    self.directions[i] = direction
+                    self.active[i] = True
+                    self.age[i] = 0
+                    self.route_id[i] = random.randint(0, 2)  # 0: tout droit, 1: gauche, 2: droite
+                    self.has_turned[i] = False
+                    self.num_agents += 1
+                    break
 
     
     def apply_turn(self, i):
@@ -164,17 +175,67 @@ class TrafficJunction:
                 self.directions[i] = torch.tensor([1, 0], device=self.device)
                 self.has_turned[i] = True
 
-
+    # AJOUTER LE VISUAL RANGE DANS LE VECTEUR D'ETAT !!
     def get_obs(self):
         """
-        Observation locale : distance au centre + actif
+        Obs
+        - Chaque voiture k représentée par concat(onehot_id, onehot_loc, onehot_route)
+        - Pour l'agent j: on ne garde que les voitures dans la vision 3x3 autour de j (mask),
+        les autres slots sont à zéro.
+        - Format final: (max_agents, obs_dim)
         """
-        center = torch.tensor([self.grid_size//2, self.grid_size//2], device=self.device) 
-        dxdy = center - self.positions # (max_agents, 2) 
-        obs = torch.cat([dxdy.float(), 
-                         self.directions.float(), 
-                         self.active.unsqueeze(-1).float()], 
-                         dim=-1) 
+
+        A = self.max_agents
+        G = self.grid_size
+        loc_dim = G * G
+        id_dim = A
+        route_dim = 3
+        per_car_dim = id_dim + loc_dim + route_dim
+        obs_dim = A * per_car_dim
+
+        obs = torch.zeros((A, obs_dim), device=self.device, dtype=torch.float32)
+
+        # Precompute one-hot ID (fixe)
+        eyeA = torch.eye(A, device=self.device, dtype=torch.float32)
+        eyeR = torch.eye(route_dim, device=self.device, dtype=torch.float32)
+
+        # Helper: one-hot location
+        def loc_onehot(pos_xy):
+            # pos_xy: (2,) long
+            idx = int(pos_xy[0].item()) * G + int(pos_xy[1].item())
+            v = torch.zeros((loc_dim,), device=self.device, dtype=torch.float32)
+            if 0 <= idx < loc_dim:
+                v[idx] = 1.0
+            return v
+
+        # construire vecteur (id, loc, route) pour chaque k (si actif)
+        car_vecs = torch.zeros((A, per_car_dim), device=self.device, dtype=torch.float32)
+        for k in range(A):
+            if not self.active[k]:
+                continue
+            idv = eyeA[k]
+            locv = loc_onehot(self.positions[k])
+            rid = int(self.route_id[k].item())
+            routev = eyeR[rid] if 0 <= rid < route_dim else torch.zeros((route_dim,), device=self.device)
+            car_vecs[k] = torch.cat([idv, locv, routev], dim=0)
+
+        # mask vision: visible si dans un carré vision_range x vision_range
+        for j in range(A):
+            if not self.active[j]:
+                continue
+            pj = self.positions[j]
+            for k in range(A):
+                if not self.active[k]:
+                    continue
+                pk = self.positions[k]
+                dx = int((pk[0] - pj[0]).item())
+                dy = int((pk[1] - pj[1]).item())
+                R = self.vision_radius
+                visible = (abs(dx) <= R) and (abs(dy) <= R)
+                if visible:
+                    start = k * per_car_dim
+                    obs[j, start:start + per_car_dim] = car_vecs[k]
+
         return obs
 
 
@@ -208,28 +269,35 @@ class TrafficJunction:
             if self.active[i] and actions[i] == GAS:
                 self.positions[i] += self.directions[i]
 
-        # Collision détectée?
-        for i in range(self.max_agents):
-            for j in range(i+1, self.max_agents):
-                if self.active[i] and self.active[j]:
-                    if torch.equal(self.positions[i], self.positions[j]):
-                        # self.done = True
-                        # reward -= 10.0
-                        ncollision_t += 1
-                        self.collision_count += 1
-                        # return self.get_obs(), reward, self.done
-
-        # Sortie de la grille ?
+       # Sortie de la grille ?
+        n_exit_t = 0
         for i in range(self.max_agents):
             if self.active[i]:
                 x, y = self.positions[i]
                 if x < 0 or x >= self.grid_size or y < 0 or y >= self.grid_size:
-                    reward += 1.0
+                    n_exit_t += 1
                     self.active[i] = False
-                    self.age[i] = 0 
+                    self.age[i] = 0
                     self.has_turned[i] = False
                     self.num_agents -= 1
 
+        # Reward de sortie (debug: +5 aide beaucoup; une fois que ça apprend, reteste +1)
+        reward += 5.0 * n_exit_t
+
+
+        # Collision détectée? (compter par cellule, pas par paires)
+        active_pos = self.positions[self.active]  # (K,2)
+        ncollision_t = 0
+        if active_pos.shape[0] > 1:
+            _, counts = torch.unique(active_pos, dim=0, return_counts=True)
+            ncollision_t = int((counts > 1).sum().item())
+            self.collision_count += ncollision_t
+
+            if ncollision_t > 0:
+                self.done = True
+            # self.done = True
+            # reward -= 10.0
+            # return self.get_obs(), reward, self.done
 
         # Succès ou pas ?
         # if not self.active.any():
@@ -241,8 +309,8 @@ class TrafficJunction:
         #     return self.get_obs(), 0.0, True
 
         # Calcul de la reward global au temps t
-        reward = ncollision_t * (-10)
-        reward += torch.sum(-0.01 * self.age[self.active].float()).item()
+        reward += ncollision_t * (-10)
+        reward += (-0.01 * float(self.active.sum().item()))
         self.global_reward += reward
 
         return self.get_obs(), reward, self.done
@@ -310,10 +378,11 @@ class TrafficJunction:
 
 
 def main():
-    env = TrafficJunction(grid_size=14, 
+    env = TrafficJunctionEnv(grid_size=14, 
                              max_agents=10, 
-                             p_arrive=0.3, 
-                             device="cpu", 
+                             p_arrive =  0.05, 
+                             device="cpu",
+                             vision_range = 3, 
                              render_mode=True)
 
     obs = env.reset()

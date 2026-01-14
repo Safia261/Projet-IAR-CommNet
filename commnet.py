@@ -6,13 +6,10 @@ import torch.nn.functional as F
 
 class CommNet(nn.Module):
     """
-    Modèle CommNet générique :
-    - Prend en entrée des IDs d'agents (optionnellement n'importe quels features si tu changes l'encodeur)
-    - Encode chaque agent en h0
-    - Applique K étapes de communication
-    - Renvoie les logits d'action
+    CommNet unique, utilisable pour:
+      - LeverPulling: encoder_type="id" (par défaut) + forward(agent_ids)
+      - TrafficJunction / Combat: encoder_type="obs" + forward(obs=...)
 
-    Utilisable pour lever-pulling, mais facilement extensible à d'autres environnements.
     """
 
     def __init__(
@@ -24,11 +21,13 @@ class CommNet(nn.Module):
         nonlin: str = "relu",
         use_h0: bool = True,
         use_skip: bool = True,
-        module = "mlp",
+        module="mlp",
+
+        encoder_type: str = "id",  # "id" (leverpulling) ou "obs" (traffic/combat)
+        obs_dim: int | None = None,
     ):
         super().__init__()
 
-        # ou peut etre revenir a la version d'avant?
         self.num_agents_total = num_agents_total
         self.n_actions = n_actions
         self.hidden_dim = hidden_dim
@@ -36,6 +35,8 @@ class CommNet(nn.Module):
         self.use_h0 = use_h0
         self.use_skip = use_skip
         self.module = module
+        self.encoder_type = encoder_type
+        self.obs_dim = obs_dim
 
         if nonlin.lower() == "relu":
             self.act = nn.ReLU()
@@ -43,12 +44,21 @@ class CommNet(nn.Module):
         else:
             self.act = nn.Tanh()
             act_fn = torch.tanh
-
         self.nonlin = act_fn
 
         # ENCODER
-        self.encoder = nn.Embedding(num_agents_total, hidden_dim)
+        if self.encoder_type == "id":
+            # LeverPulling: agent_ids -> embedding
+            self.encoder = nn.Embedding(num_agents_total, hidden_dim)
+        elif self.encoder_type == "obs":
+            # Traffic/Combat: obs features -> linear
+            if obs_dim is None:
+                raise ValueError('obs_dim doit être fourni si encoder_type="obs".')
+            self.encoder = nn.Linear(obs_dim, hidden_dim)
+        else:
+            raise ValueError('encoder_type doit être "id" ou "obs".')
 
+        # Module f (MLP / RNN / LSTM)
         self.f = self._create_module()
 
         # DECODER
@@ -57,15 +67,18 @@ class CommNet(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        nn.init.normal_(self.encoder.weight, mean=0.0, std=0.1)
+        # Init compatible avec les deux encoders
+        if isinstance(self.encoder, nn.Embedding):
+            nn.init.normal_(self.encoder.weight, mean=0.0, std=0.1)
 
     def _create_module(self):
         """
         Renvoie la couche avec le module f() choisi.
+        IMPORTANT: input_dim dépend de use_h0 (sinon mismatch pour RNN/LSTM).
         """
-        if self.module == "mlp":
-            input_dim = self.hidden_dim * (3 if self.use_h0 else 2)
+        input_dim = self.hidden_dim * (3 if self.use_h0 else 2)
 
+        if self.module == "mlp":
             layers = []
             in_dim = input_dim
             for i in range(2):
@@ -74,18 +87,16 @@ class CommNet(nn.Module):
                 if i < 2 - 1:
                     layers.append(self.act)
                 in_dim = out_dim
-
             return nn.Sequential(*layers)
 
         elif self.module == "rnn":
-            return nn.RNN(self.hidden_dim * 2, self.hidden_dim, batch_first = True)
-        
-        elif self.module == "lstm":
-            return nn.LSTM(self.hidden_dim * 2, self.hidden_dim, batch_first = True)
-        
-        else:
-            raise ValueError("Type du module incorrect. Doit être de type MLP, RNN ou LSTM.") 
+            return nn.RNN(input_dim, self.hidden_dim, batch_first=True)
 
+        elif self.module == "lstm":
+            return nn.LSTM(input_dim, self.hidden_dim, batch_first=True)
+
+        else:
+            raise ValueError("Type du module incorrect. Doit être de type MLP, RNN ou LSTM.")
 
     @staticmethod
     def _compute_communication(h):
@@ -100,35 +111,52 @@ class CommNet(nn.Module):
         c = (sum_all - h) / (M - 1)
         return c
 
-    def forward(self, agent_ids):
+    def forward(self, agent_ids=None, obs=None):
         """
-        agent_ids : (B, M) indices des agents choisis pour ce round.
+        LeverPulling:
+            logits = model(agent_ids)  # agent_ids: (B, M) long
 
-        Sortie :
+        TrafficJunction / Combat:
+            logits = model(obs=obs)    # obs: (B, M, obs_dim) float
+
+        Sortie:
             logits : (B, M, n_actions)
         """
+        # --- Encoder ---
+        if self.encoder_type == "id":
+            if agent_ids is None:
+                raise ValueError('encoder_type="id": il faut fournir agent_ids.')
+            h0 = self.encoder(agent_ids)  # (B,M,H)
 
-        # 1) Encode les IDs -> h0
-        h0 = self.encoder(agent_ids)  # (B, M, H)
+        elif self.encoder_type == "obs":
+            if obs is None:
+                raise ValueError('encoder_type="obs": il faut fournir obs=...')
+            h0 = self.encoder(obs)        # (B,M,H)
+
+        else:
+            raise RuntimeError("encoder_type inconnu (devrait être géré au __init__).")
+
         h = h0.clone()
 
-        # 2) K étapes de communication
+        # --- Communication K steps ---
         for _ in range(self.comm_steps):
             c = self._compute_communication(h)
 
             if self.use_h0:
-                x = torch.cat([h, c, h0], dim=-1)
+                x = torch.cat([h, c, h0], dim=-1)  # (B,M,3H)
             else:
-                x = torch.cat([h, c], dim=-1)
+                x = torch.cat([h, c], dim=-1)      # (B,M,2H)
 
-            # a verifier
             delta = self.f(x)
+            # Pour RNN/LSTM, PyTorch renvoie un tuple (output, hidden)
+            if isinstance(delta, tuple):
+                delta = delta[0]  # output: (B,M,H)
 
             if self.use_skip:
                 h = h + delta
             else:
                 h = delta
 
-        # 3) Décodage vers les actions
+        # --- Decode ---
         logits = self.decoder(h)
         return logits
