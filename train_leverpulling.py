@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import optim
 from torch.distributions import Categorical
 
-from commnet import CommNet
+from commnet_leverpulling import CommNet
 from leverpulling_env import LeverPullingEnv
 
 
