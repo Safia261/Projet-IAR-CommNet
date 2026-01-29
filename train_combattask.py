@@ -3,43 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from combattask_env import CombatTask
-# from commnet import CommNet
 from models import ModelConfig, make_model
-
-
-# def collect_episode(env, model, gamma=0.99):
-#     obs = env.reset()
-#     obs = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-
-#     log_probs = []
-#     rewards = []
-
-#     done = False
-#     while not done:
-#         logits = model(obs=obs)
-#         dist = torch.distributions.Categorical(logits=logits)
-
-#         actions = dist.sample()
-#         log_prob = dist.log_prob(actions)  # (1, m)
-
-#         actions_list = actions.squeeze(0).tolist()
-#         next_obs, reward, done, info = env.step(actions_list)
-
-#         log_probs.append(log_prob.sum())   # attention scalaire
-#         rewards.append(reward)
-
-#         obs = torch.tensor(next_obs, dtype=torch.float32).unsqueeze(0)
-
-#     # returns
-#     returns = []
-#     G = 0.0
-#     for r in reversed(rewards):
-#         G = r + gamma * G
-#         returns.insert(0, G)
-#     returns = torch.tensor(returns, dtype=torch.float32)
-
-#     return log_probs, returns, sum(rewards)
-
 
 
 def collect_episode(env, model, gamma=0.99):
@@ -69,7 +33,7 @@ def collect_episode(env, model, gamma=0.99):
 
         obs = torch.tensor(next_obs, dtype=torch.float32).unsqueeze(0)
 
-    # returns
+    # return pour avoir le win rate
     returns = []
     G = 0.0
     for r in reversed(rewards):
@@ -147,39 +111,6 @@ def train_combattask(
     return win_rates_history
 
 
-
-# def test_policy(env, model, n_episodes=1000):
-#     model.eval()
-#     total_wins = 0
-
-#     for _ in range(n_episodes):
-#         obs = env.reset()
-#         obs = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-
-#         done = False
-#         final_result = None
-
-#         while not done:
-#             with torch.no_grad():
-#                 logits = model(obs=obs)
-#                 dist = torch.distributions.Categorical(logits=logits)
-#                 actions = dist.sample()
-
-#             actions_list = actions.squeeze(0).tolist()
-#             next_obs, reward, done, info = env.step(actions_list)
-
-#             if done:
-#                 final_result = info["result"]
-
-#             obs = torch.tensor(next_obs, dtype=torch.float32).unsqueeze(0)
-
-#         if final_result == "win":
-#             total_wins += 1
-
-#     win_rate = total_wins / n_episodes
-#     return win_rate
-
-
 def test_policy(env, model, n_episodes=1000):
     model.eval()
     total_wins = 0
@@ -220,16 +151,6 @@ def main():
     env = CombatTask(render_mode=False)
 
     # 2) Modèle CommNet (hidden_dim=50 comme dans l’article, comm_steps=2)
-    # pour l'ancienne version de CommNet
-    # model = CommNet(
-    #     num_agents_total=env.n_agents_per_team,
-    #     n_actions=env.n_actions,
-    #     hidden_dim=50,
-    #     comm_steps=2,
-    #     encoder_type="obs",
-    #     obs_dim=env.obs_dim,
-    #     module="mlp",
-    # )
 
     cfg = ModelConfig(
         obs_dim=env.obs_dim,
