@@ -1,0 +1,206 @@
+{
+  "run_id": "20260129_160426",
+  "env_cfg": {
+    "height": 14,
+    "width": 14,
+    "max_steps": 40,
+    "nmax": 10,
+    "p_arrive": 0.15,
+    "r_collision": -10.0,
+    "r_wait": -0.01,
+    "visibility": 1,
+    "include_route_channels": false
+  },
+  "seeds": [
+    0,
+    1
+  ],
+  "table2_left": {
+    "Independent": {
+      "MLP": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      },
+      "RNN": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      },
+      "LSTM": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      }
+    },
+    "Fully-connected": {
+      "MLP": {
+        "mean_fail_pct": 73.66666666666667,
+        "std_fail_pct": 0.0
+      },
+      "RNN": {
+        "mean_fail_pct": 77.16666666666667,
+        "std_fail_pct": 7.7781745930520225
+      },
+      "LSTM": {
+        "mean_fail_pct": 67.16666666666666,
+        "std_fail_pct": 5.421151989096868
+      }
+    },
+    "Discrete comm.": {
+      "MLP": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      },
+      "RNN": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      },
+      "LSTM": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      }
+    },
+    "CommNet": {
+      "MLP": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      },
+      "RNN": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      },
+      "LSTM": {
+        "mean_fail_pct": 83.0,
+        "std_fail_pct": 0.471404520791035
+      }
+    }
+  },
+  "raw": {
+    "Independent": {
+      "MLP": {
+        "fail_rates_pct": [
+          83.33333333333334,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -74.95286666666667,
+          -65.5378
+        ]
+      },
+      "RNN": {
+        "fail_rates_pct": [
+          82.66666666666667,
+          83.33333333333334
+        ],
+        "mean_returns": [
+          -65.5378,
+          -74.95286666666667
+        ]
+      },
+      "LSTM": {
+        "fail_rates_pct": [
+          82.66666666666667,
+          83.33333333333334
+        ],
+        "mean_returns": [
+          -65.5378,
+          -74.95286666666667
+        ]
+      }
+    },
+    "Fully-connected": {
+      "MLP": {
+        "fail_rates_pct": [
+          73.66666666666667,
+          73.66666666666667
+        ],
+        "mean_returns": [
+          -51.32703333333333,
+          -50.96893333333333
+        ]
+      },
+      "RNN": {
+        "fail_rates_pct": [
+          71.66666666666667,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -53.107166666666664,
+          -65.5378
+        ]
+      },
+      "LSTM": {
+        "fail_rates_pct": [
+          71.0,
+          63.33333333333333
+        ],
+        "mean_returns": [
+          -51.71293333333334,
+          -48.87916666666667
+        ]
+      }
+    },
+    "Discrete comm.": {
+      "MLP": {
+        "fail_rates_pct": [
+          83.33333333333334,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -74.95286666666667,
+          -65.5378
+        ]
+      },
+      "RNN": {
+        "fail_rates_pct": [
+          83.33333333333334,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -74.95286666666667,
+          -65.5378
+        ]
+      },
+      "LSTM": {
+        "fail_rates_pct": [
+          83.33333333333334,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -74.95286666666667,
+          -65.5378
+        ]
+      }
+    },
+    "CommNet": {
+      "MLP": {
+        "fail_rates_pct": [
+          83.33333333333334,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -74.95286666666667,
+          -65.5378
+        ]
+      },
+      "RNN": {
+        "fail_rates_pct": [
+          83.33333333333334,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -74.95286666666667,
+          -65.5378
+        ]
+      },
+      "LSTM": {
+        "fail_rates_pct": [
+          83.33333333333334,
+          82.66666666666667
+        ],
+        "mean_returns": [
+          -74.95286666666667,
+          -65.5378
+        ]
+      }
+    }
+  }
+}
