@@ -14,10 +14,6 @@ We considered three environments:
 Despite a correct implementation of the model and training pipeline, the experimental results highlight the **practical limitations of CommNet trained with simple policy-gradient methods** in complex combat scenarios.
 
 ---
-## Project structure
-
-
----
 ## Installation
 
 We recommend you to create a virtual environment to install the necessary dependencies and run the code.
