@@ -83,7 +83,7 @@ def train_combattask(
             advantages = returns_tensor - baseline
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # calcul de la loss
+            # loss computation
             loss = 0.0
             for log_p, adv in zip(all_log_probs, advantages):
                 loss += -log_p * adv
@@ -147,10 +147,9 @@ def test_policy(env, model, n_episodes=1000):
 
 
 def main():
-    # 1) Environnement (sans rendu pour l'entraînement massif)
     env = CombatTask(render_mode=False)
 
-    # 2) Modèle CommNet (hidden_dim=50 comme dans l’article, comm_steps=2)
+    # Model CommNet (hidden_dim=50 as in the article, comm_steps=2)
 
     cfg = ModelConfig(
         obs_dim=env.obs_dim,
@@ -164,10 +163,10 @@ def main():
 
     model = make_model("commnet", cfg)
 
-    # 3) Optimiseur RMSProp (comme dans l’article)
+    # Optimizer RMSProp
     optimizer = optim.RMSprop(model.parameters(), lr=1e-3)
 
-    # 4) Entraînement
+    # Training
     win_rates_history = train_combattask(
         env,
         model,
@@ -181,7 +180,7 @@ def main():
     mean_win_rate = sum(win_rates_history) / len(win_rates_history)
     print(f"Taux de réussite moyen sur l'ensemble des epochs : {mean_win_rate:.3f}")
 
-    # 5) Test final (pour évaluer l'entraînement)
+    # Final test
     test_episodes = 1000
     win_rate = test_policy(env, model, n_episodes=test_episodes)
     print(f"Win-rate final sur {test_episodes} épisodes : {win_rate:.3f}")

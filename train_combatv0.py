@@ -1,15 +1,14 @@
 import gym
-import ma_gym       # Attention: compatible avec seulement des versions de Python < 3.12
+import ma_gym       # Attention: only compatible with python versions < 3.12
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
-# from commnet import CommNet
 from models import ModelConfig, make_model
 
 # ============================================================
-# Fonctions utiles pour ma-gym Combat-v0
+# Useful functions for ma-gym Combat-v0
 # ============================================================
 
 def flatten_obs(obs_dict):
@@ -32,7 +31,7 @@ def flatten_rewards(reward_list):
 
 
 # ============================================================
-# Collecte d'un épisode
+# Collect of one episode
 # ============================================================
 
 def obs_list_to_tensor(obs_list, device="cpu"):
@@ -46,7 +45,7 @@ def obs_list_to_tensor(obs_list, device="cpu"):
 
 def collect_episode(env, model, gamma=0.99, device="cpu"):
     log_probs = []
-    rewards = [] # pour calculer le win rate
+    rewards = [] # to compute win rate
 
     obs_list = env.reset()
     obs = obs_list_to_tensor(obs_list, device)
@@ -60,8 +59,8 @@ def collect_episode(env, model, gamma=0.99, device="cpu"):
         logits = out["action_logits"]
         dist = Categorical(logits=logits)
 
-        actions = dist.sample()                       # [1, N]
-        log_prob = dist.log_prob(actions).sum()       # scalaire
+        actions = dist.sample()
+        log_prob = dist.log_prob(actions).sum()
 
         action_dict = {i: actions[0, i].item() for i in range(n_agents)}
 
@@ -88,7 +87,7 @@ def collect_episode(env, model, gamma=0.99, device="cpu"):
 
 
 # ============================================================
-# Entraînement
+# Training
 # ============================================================
 
 def train(
@@ -121,14 +120,14 @@ def train(
             advantages = returns_tensor - baseline
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # calcul de la loss
+            # loss computation
             loss = 0.0
             for lp, adv in zip(all_log_probs, advantages):
                 loss += -lp * adv
             loss = loss / len(advantages)
 
             optimizer.zero_grad()
-            loss.backward() # backpropagation de la loss
+            loss.backward() # loss backpropagation
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
 
@@ -195,7 +194,7 @@ def main():
     n_actions = env.action_space[0].n
 
     cfg = ModelConfig(
-        obs_dim=obs_dim,          # dim observation par agent
+        obs_dim=obs_dim,          # dim observation per agent
         n_actions=n_actions,      # env.action_space[0].n
         n_agents=n_agents,        # env.n_agents
         hidden_dim=50, 
@@ -224,7 +223,7 @@ def main():
 
 def obs_list_to_tensor(obs_list, device):
     obs = torch.tensor(obs_list, dtype=torch.float32, device=device)
-    return obs.unsqueeze(0)   # [1, N, obs_dim]
+    return obs.unsqueeze(0)   # should be [1, N, obs_dim]
 
 
 def full_mask(batch_size, n_agents, device):
