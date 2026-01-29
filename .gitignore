@@ -2,7 +2,10 @@
 .venv/
 venv/
 env/
+.venv310/
 
 # Fichiers Python temporaires
 __pycache__/
 *.pyc
+
+desktop.ini
