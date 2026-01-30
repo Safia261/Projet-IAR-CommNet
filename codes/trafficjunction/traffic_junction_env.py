@@ -225,7 +225,7 @@ class TrafficJunctionEnv:
                 car.tau += 1
 
         done = self.step_count >= self.cfg.max_steps
-        info = {"collision_cells": collision_cells, "passed": passed, "active": self.num_active, "t": self.step_count}
+        info = {"collision_cells": collision_cells, "passed": passed, "active": self.num_active(), "t": self.step_count}
 
         return self.get_obs(), float(reward), bool(done), info
 
@@ -234,7 +234,7 @@ class TrafficJunctionEnv:
         occupied = {c.pos for c in self.cars if c.active}
 
         for sid, src in enumerate(self.sources):
-            if self.num_active >= self.cfg.nmax:
+            if self.num_active() >= self.cfg.nmax:
                 break
             if self.rng.random() >= self.cfg.p_arrive:
                 continue
