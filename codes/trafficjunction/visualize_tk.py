@@ -1,5 +1,4 @@
 import argparse
-import time
 import tkinter as tk
 from tkinter import ttk
 from typing import Dict, Tuple, List
@@ -12,16 +11,18 @@ from models import ModelConfig, make_model
 
 CELL = 32
 
+
 class TrafficViewer(tk.Tk):
     def __init__(self, env: TrafficJunctionEnv, model, device: torch.device):
         super().__init__()
-        self.title("Traffic Junction (2x2, keep-right)")
+        self.title("Traffic Junction")
 
         self.env = env
         self.model = model
         self.device = device
 
-        self.canvas = tk.Canvas(self,
+        self.canvas = tk.Canvas(
+            self,
             width=env.cfg.width * CELL,
             height=env.cfg.height * CELL,
             bg="white",
@@ -44,11 +45,36 @@ class TrafficViewer(tk.Tk):
         self.collision_count = 0
         self.total_r = 0.0
         self.last_actions = np.zeros((self.env.cfg.nmax,), dtype=int)  # 0=brake, 1=gas
-        self.just_finished: Dict[int, Tuple[int,int,int]] = {}  # idx -> (y,x,route_kind) for 1-frame display
+        self.just_finished: Dict[int, Tuple[int, int, int]] = {}  # idx -> (y,x,route_kind) for 1-frame display
+
+        # Playback control (avoid time.sleep + update loops)
+        self.playing = False
+        self._after_id = None
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.reset_env()
 
+    def on_close(self):
+        """Stop any scheduled callbacks and close cleanly."""
+        self.playing = False
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        self.destroy()
+
     def reset_env(self):
+        # Stop playback if reset is pressed mid-episode
+        self.playing = False
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
         self.obs = self.env.reset()
         self.t = 0
         self.collision_count = 0
@@ -58,7 +84,6 @@ class TrafficViewer(tk.Tk):
 
         if hasattr(self.model, "init_state"):
             self.state = self.model.init_state(1, self.env.cfg.nmax, self.device)
-
         else:
             self.state = None
 
@@ -77,6 +102,10 @@ class TrafficViewer(tk.Tk):
         return act.squeeze(0).cpu().numpy().astype(int)
 
     def step_once(self):
+        # If window/canvas is gone, do nothing (prevents TclError)
+        if not self.winfo_exists() or not self.canvas.winfo_exists():
+            return
+
         # Snapshot before stepping so we can show cars on their destination cell
         # for exactly one frame (the env deactivates them immediately after reaching it).
         pre_active = [c.active for c in self.env.cars]
@@ -85,10 +114,8 @@ class TrafficViewer(tk.Tk):
         for c in self.env.cars:
             if c.active and c.route_id >= 0:
                 dest = self.env.routes[c.route_id][-1]
-
             else:
                 dest = (0, 0)
-
             pre_dest.append(dest)
             pre_kind.append(c.route_kind)
 
@@ -115,28 +142,49 @@ class TrafficViewer(tk.Tk):
             self.lbl.configure(
                 text=f"done | t={self.t} | collisions_total={self.collision_count} | return={self.total_r:.2f}"
             )
+            # stop playback at episode end
+            self.playing = False
+            if self._after_id is not None:
+                try:
+                    self.after_cancel(self._after_id)
+                except Exception:
+                    pass
+                self._after_id = None
 
     def play_episode(self):
+        """Start (or restart) an episode using Tk's event loop (no blocking sleep)."""
         self.reset_env()
-        for _ in range(self.env.cfg.max_steps):
-            self.update()
-            self.step_once()
-            self.update()
-            time.sleep(0.5)
+        self.playing = True
+        self._tick()
 
-            if self.t >= self.env.cfg.max_steps:
-                break
+    def _tick(self):
+        """One playback tick scheduled via after()."""
+        if not self.playing or not self.winfo_exists():
+            return
+
+        self.step_once()
+
+        if self.t >= self.env.cfg.max_steps:
+            self.playing = False
+            return
+
+        # 500 ms between frames (same as your previous time.sleep(0.5))
+        self._after_id = self.after(500, self._tick)
 
     def render(self, info):
+        # Guard against rendering after window/canvas destroyed
+        if not self.winfo_exists() or not self.canvas.winfo_exists():
+            return
+
         self.canvas.delete("all")
 
         H, W = self.env.cfg.height, self.env.cfg.width
-        cy, cx = H // 2, W // 2 # intersection center
+        cy, cx = H // 2, W // 2  # intersection center
         # Lanes
-        v_left = cx - 1 # North->South 
-        v_right = cx # South->North
-        h_up = cy - 1 # East->West
-        h_down = cy # West->East 
+        v_left = cx - 1  # North->South
+        v_right = cx  # South->North
+        h_up = cy - 1  # East->West
+        h_down = cy  # West->East
         row_EW = h_down
         row_WE = h_up
         col_SN = v_left
@@ -161,7 +209,6 @@ class TrafficViewer(tk.Tk):
             self.label(sy, sx, "S")
 
         dests = {route[-1] for route in self.env.routes}
-
         for (dy, dx) in dests:
             self.label(dy, dx, "D")
 
@@ -170,7 +217,6 @@ class TrafficViewer(tk.Tk):
         for i, c in enumerate(self.env.cars):
             if not c.active:
                 continue
-
             y, x = c.pos
             pos_to_ids.setdefault((y, x), []).append(i)
 
@@ -194,10 +240,8 @@ class TrafficViewer(tk.Tk):
 
             if is_colliding:
                 outline, width = "red", 4
-
             elif is_braking:
                 outline, width = "blue", 3
-
             else:
                 outline, width = "black", 2
 
@@ -220,13 +264,8 @@ class TrafficViewer(tk.Tk):
                 font=("Arial", 10, "bold"),
             )
 
-            """
-            if self.last_actions[i] == 0:  # brake
-                self.rect(y, x, fill="#fff06c", outline="#ffd700")
-            """
-
         # cars that just finished this step (env deactivates them immediately)
-        for i, (y, x, kind) in getattr(self, 'just_finished', {}).items():
+        for i, (y, x, kind) in getattr(self, "just_finished", {}).items():
             pad = 4
             fill = self.car_color(kind)
             self.canvas.create_oval(
@@ -235,21 +274,21 @@ class TrafficViewer(tk.Tk):
                 x * CELL + CELL - pad,
                 y * CELL + CELL - pad,
                 fill=fill,
-                outline='green',
+                outline="green",
                 width=3,
             )
-            letter = 'L' if kind == 0 else 'S' if kind == 1 else 'R'
+            letter = "L" if kind == 0 else "S" if kind == 1 else "R"
             self.canvas.create_text(
                 x * CELL + CELL / 2,
                 y * CELL + CELL / 2,
                 text=letter,
-                fill='white',
-                font=('Arial', 10, 'bold'),
+                fill="white",
+                font=("Arial", 10, "bold"),
             )
 
         self.lbl.configure(
             text=f"t={self.t} | collision_cells={info.get('collision_cells', 0)} | "
-                 f"collisions_total={self.collision_count} | return={self.total_r:.2f}"
+            f"collisions_total={self.collision_count} | return={self.total_r:.2f}"
         )
 
     def rect(self, y, x, fill="", outline="#ddd"):
@@ -276,7 +315,7 @@ class TrafficViewer(tk.Tk):
             return "#2ca02c"  # left
         if route == 1:
             return "#1f77b4"  # straight
-        return "#d62728"      # right
+        return "#d62728"  # right
 
 
 def load_model(ckpt_path, model_key, device):
@@ -286,15 +325,18 @@ def load_model(ckpt_path, model_key, device):
     model.load_state_dict(ckpt["model_state"])
     model.eval()
     env_cfg = TrafficJunctionConfig(**ckpt["env_cfg"])
-
     return model, env_cfg
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt", type=str, required=True)
-    p.add_argument("--model", type=str, required=True,
-                   choices=["independent", "fully_connected", "discrete_comm", "commnet"])
+    p.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        choices=["independent", "fully_connected", "discrete_comm", "commnet"],
+    )
     p.add_argument("--device", type=str, default="cpu")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
